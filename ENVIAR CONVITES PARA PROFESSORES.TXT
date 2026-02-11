@@ -1,0 +1,94 @@
+/* SCRIPT FINAL: MÚLTIPLOS PROFESSORES
+   - Identifica a turma pela SEÇÃO (Coluna B)
+   - Lê múltiplos e-mails na Coluna F (separados por vírgula ou ponto e vírgula)
+   - Envia convite para todos
+*/
+
+function onOpen(){
+    SpreadsheetApp.getUi()
+      .createMenu('Administrativo')
+      .addItem('>> Convidar por Seção (Múltiplos)', convidarPorSecaoMultiplos)
+      .addToUi();
+}
+
+function convidarPorSecaoMultiplos() {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const lastRow = sheet.getLastRow();
+    
+    if (lastRow < 2) return;
+
+    // Pega dados da Coluna A até F
+    const dados = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+
+    // 1. MAPEAMENTO (SEÇÃO -> ID)
+    SpreadsheetApp.getActive().toast("Mapeando turmas pela Seção...");
+    let mapaPorSecao = {};
+    let pageToken = null;
+    
+    try {
+        do {
+            const resposta = Classroom.Courses.list({
+                pageToken: pageToken,
+                courseStates: ['ACTIVE', 'PROVISIONED']
+            });
+            if (resposta.courses) {
+                resposta.courses.forEach(c => {
+                    if (c.section) {
+                        mapaPorSecao[c.section.toString()] = c.id;
+                    }
+                });
+            }
+            pageToken = resposta.nextPageToken;
+        } while (pageToken);
+    } catch (e) {
+        SpreadsheetApp.getUi().alert("Erro ao ler Classroom. Verifique permissões.");
+        return;
+    }
+
+    // 2. ENVIAR CONVITES (COM SUPORTE A MÚLTIPLOS EMAILS)
+    let enviados = 0;
+    
+    dados.forEach((linha, index) => {
+        const secaoPlanilha = linha[1] ? linha[1].toString() : ""; // Coluna B
+        const emailsBrutos = linha[5]; // Coluna F (Pode ter vários emails)
+        
+        if (secaoPlanilha !== "" && emailsBrutos && emailsBrutos !== "") {
+            
+            const idDaTurma = mapaPorSecao[secaoPlanilha];
+
+            if (idDaTurma) {
+                // AQUI ESTÁ A MÁGICA:
+                // Separa por vírgula (,) OU ponto e vírgula (;)
+                const listaEmails = emailsBrutos.toString().split(/[,;]+/);
+
+                // Loop para cada email encontrado na célula
+                listaEmails.forEach(email => {
+                    // Remove espaços em branco antes/depois (trim)
+                    const emailLimpo = email.trim(); 
+
+                    if (emailLimpo !== "") {
+                        try {
+                            const convite = {
+                                userId: emailLimpo,
+                                courseId: idDaTurma,
+                                role: "TEACHER"
+                            };
+                            Classroom.Invitations.create(convite);
+                            Logger.log(`OK: Convite para ${emailLimpo} na turma ${secaoPlanilha}`);
+                            enviados++;
+                        } catch (erro) {
+                            if (!erro.message.includes("409")) {
+                                Logger.log(`ERRO ao convidar ${emailLimpo}: ${erro.message}`);
+                            }
+                        }
+                    }
+                });
+
+            } else {
+                Logger.log(`AVISO: Seção '${secaoPlanilha}' (Linha ${index + 2}) não encontrada.`);
+            }
+        }
+    });
+
+    SpreadsheetApp.getUi().alert(`Finalizado! Total de convites enviados: ${enviados}`);
+}
