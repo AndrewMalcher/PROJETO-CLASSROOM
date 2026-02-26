@@ -1,0 +1,100 @@
+/* SCRIPT: CONVIDAR ALUNOS (SUPORTA LINHAS REPETIDAS)
+   - A coluna B (Seção) pode se repetir em várias linhas.
+   - O script lê cada linha e convida os alunos da coluna G para a turma da coluna B.
+*/
+
+function onOpen(){
+    const ui = SpreadsheetApp.getUi();
+    ui.createMenu('Administrativo')
+      .addItem('>> Convidar Alunos (Col G)', 'convidarAlunosPorSecaoIndependente')
+      .addToUi();
+}
+
+function convidarAlunosPorSecaoIndependente() {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const lastRow = sheet.getLastRow();
+    
+    if (lastRow < 2) return;
+
+    // Pega os dados: Coluna B (índice 1) até Coluna G (índice 6)
+    // Lemos da coluna A(1) até a G(7)
+    const dados = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
+
+    // 1. MAPEAMENTO DE SEGURANÇA (SEÇÃO -> ID)
+    // Precisamos saber qual ID numérico pertence a qual Seção de texto
+    SpreadsheetApp.getActive().toast("Sincronizando turmas do Classroom...");
+    let mapaPorSecao = {};
+    let pageToken = null;
+    
+    try {
+        do {
+            const resposta = Classroom.Courses.list({
+                pageToken: pageToken,
+                courseStates: ['ACTIVE', 'PROVISIONED']
+            });
+            if (resposta.courses) {
+                resposta.courses.forEach(c => {
+                    if (c.section) {
+                        mapaPorSecao[c.section.toString().trim()] = c.id;
+                    }
+                });
+            }
+            pageToken = resposta.nextPageToken;
+        } while (pageToken);
+    } catch (e) {
+        SpreadsheetApp.getUi().alert("Erro ao listar turmas: " + e.message);
+        return;
+    }
+
+    // 2. PROCESSAMENTO LINHA POR LINHA
+    let convitesSucesso = 0;
+    let pulados = 0;
+
+    dados.forEach((linha, index) => {
+        const secaoDaLinha = linha[1] ? linha[1].toString().trim() : ""; // Coluna B
+        const emailsDaLinha = linha[6]; // Coluna G
+        
+        // Só processa se a linha tiver Seção e Alunos
+        if (secaoDaLinha !== "" && emailsDaLinha && emailsDaLinha !== "") {
+            
+            const idDaTurma = mapaPorSecao[secaoDaLinha];
+
+            if (idDaTurma) {
+                // Separa os emails caso haja mais de um na mesma célula (por , ou ;)
+                const listaEmails = emailsDaLinha.toString().split(/[,;]+/);
+
+                listaEmails.forEach(email => {
+                    const emailLimpo = email.trim();
+                    if (emailLimpo !== "") {
+                        try {
+                            Classroom.Invitations.create({
+                                userId: emailLimpo,
+                                courseId: idDaTurma,
+                                role: "STUDENT"
+                            });
+                            Logger.log(`Linha ${index+2}: Convite enviado para ${emailLimpo} na turma ${secaoDaLinha}`);
+                            convitesSucesso++;
+                        } catch (erro) {
+                            // Se o aluno já foi convidado em uma linha anterior ou já está na turma, o Google retorna erro 409
+                            if (erro.message.includes("409")) {
+                                Logger.log(`Linha ${index+2}: ${emailLimpo} já possui convite para a seção ${secaoDaLinha}.`);
+                                pulados++;
+                            } else {
+                                Logger.log(`Linha ${index+2}: Erro ao convidar ${emailLimpo}: ${erro.message}`);
+                            }
+                        }
+                    }
+                });
+            } else {
+                Logger.log(`Linha ${index+2}: A Seção "${secaoDaLinha}" não foi encontrada no Classroom.`);
+            }
+        }
+    });
+
+    SpreadsheetApp.getUi().alert(
+      "Processo concluído!\n\n" +
+      "Convites novos enviados: " + convitesSucesso + "\n" +
+      "Alunos já convidados anteriormente: " + pulados + "\n\n" +
+      "Veja os detalhes no menu 'Ver' > 'Registros de execução'."
+    );
+}
