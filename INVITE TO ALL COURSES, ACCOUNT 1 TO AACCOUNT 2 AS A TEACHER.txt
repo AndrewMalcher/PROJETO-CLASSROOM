@@ -1,0 +1,79 @@
+/**
+ * SCRIPT: CONVIDAR CONTA B PARA TODAS AS TURMAS
+ * Objetivo: Enviar convite de Professor para a Conta B em todas as turmas
+ * onde a conta atual (que executa o script) é professora.
+ */
+
+// 1. ESCREVA O EMAIL DA CONTA B AQUI
+const EMAIL_CONTA_B = "academico.manaus.2026@faculdadelasalle.edu.br"; 
+
+function convidarContaBParaTudo() {
+  let pageToken = null;
+  let convitesEnviados = 0;
+  let erros = 0;
+
+  console.log("Iniciando busca de turmas...");
+
+  try {
+    do {
+      // Lista as turmas onde EU sou professor (teacherId: 'me')
+      // Estados: ACTIVE (Ativas) e PROVISIONED (Recém criadas/não publicadas)
+      const response = Classroom.Courses.list({
+        teacherId: 'me',
+        courseStates: ['ACTIVE', 'PROVISIONED'],
+        pageToken: pageToken
+      });
+
+      const courses = response.courses;
+
+      if (!courses || courses.length === 0) {
+        console.log("Nenhuma turma encontrada onde você é professor.");
+        break;
+      }
+
+      // Para cada turma encontrada
+      courses.forEach(course => {
+        try {
+          const invitation = {
+            userId: EMAIL_CONTA_B,
+            courseId: course.id,
+            role: "TEACHER"
+          };
+
+          // Envia o convite
+          Classroom.Invitations.create(invitation);
+          
+          console.log(`SUCESSO: Convite enviado para a turma: ${course.name} (ID: ${course.id})`);
+          convitesEnviados++;
+        } catch (e) {
+          // Erro 409 significa que o convite já existe ou a pessoa já está na turma
+          if (e.message.includes("409")) {
+            console.warn(`AVISO: A conta B já foi convidada ou já está na turma: ${course.name}`);
+          } else {
+            console.error(`ERRO na turma ${course.name}: ${e.message}`);
+            erros++;
+          }
+        }
+      });
+
+      pageToken = response.nextPageToken;
+    } while (pageToken);
+
+    const resumo = `Finalizado!\nConvites enviados: ${convitesEnviados}\nErros/Já existentes: ${erros}`;
+    console.log(resumo);
+    
+    // Alerta visual se estiver usando com uma planilha
+    try { SpreadsheetApp.getUi().alert(resumo); } catch(e) {}
+
+  } catch (err) {
+    console.error("Erro crítico ao listar turmas: " + err.message);
+  }
+}
+
+// Cria o menu na planilha para facilitar
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Migração Classroom')
+    .addItem('>> Convidar Conta B para todas as turmas', 'convidarContaBParaTudo')
+    .addToUi();
+}

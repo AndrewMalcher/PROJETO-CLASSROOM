@@ -1,0 +1,31 @@
+
+
+function aceitarConvitesPeloId() {
+  let pageToken = null;
+  let aceitos = 0;
+
+  try {
+    do {
+      const response = Classroom.Invitations.list({ userId: 'me', pageToken: pageToken });
+      const invitations = response.invitations;
+
+      if (invitations) {
+        invitations.forEach(inv => {
+          try {
+            // Tenta aceitar usando o ID DO CONVITE em vez de criar o professor
+            Classroom.Invitations.accept(inv.id); 
+            console.log("Aceito com sucesso!");
+            aceitos++;
+          } catch (e) {
+            console.error("Erro no convite " + inv.id + ": " + e.message);
+          }
+        });
+      }
+      pageToken = response.nextPageToken;
+    } while (pageToken);
+    
+    console.log("Total de convites processados: " + aceitos);
+  } catch (err) {
+    console.error("Erro geral: " + err.message);
+  }
+}

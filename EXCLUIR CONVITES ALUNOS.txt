@@ -1,0 +1,95 @@
+/* SCRIPT: REMOVER ALUNOS 
+   - Identifica a turma pela SEÇÃO (Coluna B)
+   - Remove os alunos listados na Coluna G
+*/
+
+function onOpen(){
+    const ui = SpreadsheetApp.getUi();
+    ui.createMenu('Administrativo')
+      .addItem('>> Convidar Alunos (Col G)', 'convidarAlunosPorSecaoIndependente')
+      .addSeparator()
+      .addItem('>> REMOVER Alunos (Col G)', 'removerAlunosPorSecao') // Nova função
+      .addToUi();
+}
+
+function removerAlunosPorSecao() {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const lastRow = sheet.getLastRow();
+    
+    if (lastRow < 2) return;
+
+    // Lemos da coluna A(1) até a G(7)
+    const dados = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
+
+    // 1. MAPEAMENTO (SEÇÃO -> ID)
+    SpreadsheetApp.getActive().toast("Sincronizando turmas para remoção...");
+    let mapaPorSecao = {};
+    let pageToken = null;
+    
+    try {
+        do {
+            const resposta = Classroom.Courses.list({
+                pageToken: pageToken,
+                courseStates: ['ACTIVE', 'PROVISIONED']
+            });
+            if (resposta.courses) {
+                resposta.courses.forEach(c => {
+                    if (c.section) {
+                        mapaPorSecao[c.section.toString().trim()] = c.id;
+                    }
+                });
+            }
+            pageToken = resposta.nextPageToken;
+        } while (pageToken);
+    } catch (e) {
+        SpreadsheetApp.getUi().alert("Erro ao listar turmas: " + e.message);
+        return;
+    }
+
+    // 2. PROCESSAMENTO DE REMOÇÃO
+    let removidosSucesso = 0;
+    let falhas = 0;
+
+    const confirmacao = SpreadsheetApp.getUi().alert(
+      "Cuidado!", 
+      "Você tem certeza que deseja REMOVER os alunos da coluna G das turmas da coluna B?", 
+      SpreadsheetApp.getUi().ButtonSet.YES_NO
+    );
+
+    if (confirmacao !== SpreadsheetApp.getUi().Button.YES) return;
+
+    dados.forEach((linha, index) => {
+        const secaoDaLinha = linha[1] ? linha[1].toString().trim() : ""; // Coluna B
+        const emailsDaLinha = linha[6]; // Coluna G
+        
+        if (secaoDaLinha !== "" && emailsDaLinha && emailsDaLinha !== "") {
+            const idDaTurma = mapaPorSecao[secaoDaLinha];
+
+            if (idDaTurma) {
+                const listaEmails = emailsDaLinha.toString().split(/[,;]+/);
+
+                listaEmails.forEach(email => {
+                    const emailLimpo = email.trim();
+                    if (emailLimpo !== "") {
+                        try {
+                            // COMANDO DE REMOÇÃO
+                            Classroom.Courses.Students.remove(idDaTurma, emailLimpo);
+                            Logger.log(`Linha ${index+2}: Aluno ${emailLimpo} REMOVIDO da turma ${secaoDaLinha}`);
+                            removidosSucesso++;
+                        } catch (erro) {
+                            // Erro comum: Aluno não está na turma ou já foi removido
+                            Logger.log(`Linha ${index+2}: Falha ao remover ${emailLimpo}. Motivo: ${erro.message}`);
+                            falhas++;
+                        }
+                    }
+                });
+            }
+        }
+    });
+
+    SpreadsheetApp.getUi().alert(
+      "Remoção concluída!\n\n" +
+      "Alunos removidos: " + removidosSucesso + "\n" +
+      "Falhas (não estavam na turma ou erro): " + falhas
+    );
+}
